@@ -34,10 +34,10 @@ class TrackedMod:
 
 
 tracked_mods: tuple[TrackedMod, ...] = (
-    TrackedMod("axiom.echochoke", "echochoke", "🟣"),
-    TrackedMod("axiom.echoclip", "echoclip", "🔴"),
-    TrackedMod("axiom.voicecontrol", "voicecontrol", "🔵"),
-    TrackedMod("axiom.cube-abuse", "cube abuse", "🟡"),
+    TrackedMod("axiom.echochoke", "EchoChoke", "🟣"),
+    TrackedMod("axiom.echoclip", "EchoClip", "🔴"),
+    TrackedMod("axiom.voicecontrol", "Voice Control", "🔵"),
+    TrackedMod("axiom.cube-abuse", "Cube Abuse", "🟡"),
 )
 
 
