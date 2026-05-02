@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -17,11 +18,6 @@ API_URL = "https://api.geode-sdk.org/v1/mods/{}"
 STATE_FILE = Path("geode_version_state.json")
 CHECK_INTERVAL_MINUTES = 15
 
-TRACKED_MOD_IDS = (
-    "axiom.echochoke",
-    "axiom.echoclip",
-)
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -32,6 +28,23 @@ CHANGELOG_VERSION_RE = re.compile(
     r"^\s*v?(\d+(?:\.\d+)+(?:[-+][\w.]+)?)\s*$",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class TrackedMod:
+    id: str
+    label: str
+    emoji: str
+
+
+TRACKED_MODS: tuple[TrackedMod, ...] = (
+    TrackedMod("axiom.echochoke", "echochoke", "🟣"),
+    TrackedMod("axiom.echoclip", "echoclip", "🔴"),
+    TrackedMod("axiom.voicecontrol", "voicecontrol", "🔵"),
+    TrackedMod("axiom.cube-abuse", "cube abuse", "🟡"),
+)
+
+TRACKED_MOD_IDS = tuple(mod.id for mod in TRACKED_MODS)
 
 
 def utc_now_iso() -> str:
@@ -58,15 +71,16 @@ def version_from_changelog(text: Optional[str]) -> Optional[str]:
     cleaned = strip_tags(text)
     for line in cleaned.splitlines():
         line = line.strip()
-        m = CHANGELOG_VERSION_RE.match(line)
-        if m:
-            return m.group(1)
+        match = CHANGELOG_VERSION_RE.match(line)
+        if match:
+            return match.group(1)
     return None
 
 
 def first_text(data: Any, keys: tuple[str, ...]) -> Optional[str]:
     if not isinstance(data, dict):
         return None
+
     for key in keys:
         value = data.get(key)
         if isinstance(value, str):
@@ -81,9 +95,11 @@ def first_text(data: Any, keys: tuple[str, ...]) -> Optional[str]:
 def first_bool(data: Any, keys: tuple[str, ...]) -> Optional[bool]:
     if not isinstance(data, dict):
         return None
+
     for key in keys:
         if key not in data:
             continue
+
         value = data.get(key)
         if isinstance(value, bool):
             return value
@@ -95,6 +111,7 @@ def first_bool(data: Any, keys: tuple[str, ...]) -> Optional[bool]:
                 return False
         if isinstance(value, (int, float)):
             return bool(value)
+
     return None
 
 
@@ -135,35 +152,6 @@ def matches_mod_id(node: dict[str, Any], target_id: str) -> bool:
         if isinstance(value, str) and value.strip().lower() == target:
             return True
     return False
-
-
-def find_mod_node(payload: Any, target_id: str) -> Optional[dict[str, Any]]:
-    if isinstance(payload, dict):
-        for key in (target_id, target_id.lower(), target_id.upper()):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                return value
-
-        for wrapper_key in ("mods", "data", "items", "results", "entries"):
-            wrapped = payload.get(wrapper_key)
-            if isinstance(wrapped, dict):
-                for key, value in wrapped.items():
-                    if (
-                        isinstance(key, str)
-                        and key.strip().lower() == target_id.lower()
-                        and isinstance(value, dict)
-                    ):
-                        return value
-            elif isinstance(wrapped, list):
-                for item in wrapped:
-                    if isinstance(item, dict) and matches_mod_id(item, target_id):
-                        return item
-
-    for node in walk_json(payload):
-        if isinstance(node, dict) and matches_mod_id(node, target_id):
-            return node
-
-    return None
 
 
 def _collect_candidates(mod: dict[str, Any]) -> list[dict[str, Any]]:
@@ -274,10 +262,10 @@ def choose_version_candidate_from_mod(mod: dict[str, Any]) -> Optional[dict[str,
     return normalized[0]
 
 
-def extract_mod_snapshot(mod_id: str, mod_node: dict[str, Any]) -> dict[str, Any]:
+def extract_mod_snapshot(mod_id: str, mod_node: dict[str, Any], mod_label: str | None = None, mod_emoji: str | None = None) -> dict[str, Any]:
     chosen = choose_version_candidate_from_mod(mod_node)
 
-    name = first_text(mod_node, ("name", "title", "displayName", "display_name")) or mod_id
+    name = first_text(mod_node, ("name", "title", "displayName", "display_name")) or (mod_label or mod_id)
     author = first_text(mod_node, ("author", "developer", "creator", "owner"))
 
     if chosen is None:
@@ -301,6 +289,8 @@ def extract_mod_snapshot(mod_id: str, mod_node: dict[str, Any]) -> dict[str, Any
 
     return {
         "id": mod_id,
+        "label": mod_label or mod_id,
+        "emoji": mod_emoji or "•",
         "name": name,
         "author": author,
         "version": version,
@@ -323,6 +313,14 @@ def format_json_block(data: Any, limit: int = 900) -> str:
     if len(text) > limit:
         text = text[: limit - 3] + "..."
     return f"```json\n{text}\n```"
+
+
+def short_text(value: Any, limit: int = 80) -> str:
+    text = str(value) if value is not None else "unknown"
+    text = text.replace("\n", " ").strip()
+    if len(text) > limit:
+        return text[: limit - 1] + "…"
+    return text
 
 
 def load_state() -> dict[str, Any]:
@@ -393,6 +391,38 @@ def compare_versions(saved: Optional[dict[str, Any]], current: dict[str, Any]) -
     return f"{saved_display} → {current_display}"
 
 
+def status_emoji(status: str, pending: bool) -> str:
+    if pending:
+        return "⏳"
+    if status == "released":
+        return "✅"
+    if status == "unknown":
+        return "⚪"
+    return "•"
+
+
+def make_mod_card(snapshot: dict[str, Any], saved: Optional[dict[str, Any]]) -> str:
+    emoji = snapshot.get("emoji") or "•"
+    label = snapshot.get("label") or snapshot.get("id")
+    name = snapshot.get("name") or label
+    author = snapshot.get("author") or "unknown"
+    current = snapshot.get("display_version") or "unknown"
+    saved_line = version_line(saved)
+    status = snapshot.get("status") or ("pending" if snapshot.get("pending") else "released")
+    change = compare_versions(saved, snapshot)
+    status_icon = status_emoji(status, bool(snapshot.get("pending")))
+
+    return (
+        f"### {emoji} {name}\n"
+        f"`{snapshot.get('id')}`\n"
+        f"{status_icon} **status:** {status}\n"
+        f"**author:** {author}\n"
+        f"**current:** `{current}`\n"
+        f"**saved:** `{saved_line}`\n"
+        f"**change:** {change}"
+    )
+
+
 class GeodeVersionBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -429,11 +459,13 @@ class GeodeVersionBot(commands.Bot):
 
         await super().close()
 
-    async def fetch_one_snapshot(self, mod_id: str) -> tuple[str, dict[str, Any]]:
+    async def fetch_one_snapshot(self, mod: TrackedMod) -> tuple[str, dict[str, Any]]:
         if not self.session:
-            return mod_id, {
-                "id": mod_id,
-                "name": mod_id,
+            return mod.id, {
+                "id": mod.id,
+                "label": mod.label,
+                "emoji": mod.emoji,
+                "name": mod.label,
                 "author": None,
                 "version": None,
                 "display_version": "unknown",
@@ -448,12 +480,14 @@ class GeodeVersionBot(commands.Bot):
             }
 
         try:
-            async with self.session.get(API_URL.format(mod_id)) as res:
+            async with self.session.get(API_URL.format(mod.id)) as res:
                 if res.status != 200:
                     text = await res.text()
-                    return mod_id, {
-                        "id": mod_id,
-                        "name": mod_id,
+                    return mod.id, {
+                        "id": mod.id,
+                        "label": mod.label,
+                        "emoji": mod.emoji,
+                        "name": mod.label,
                         "author": None,
                         "version": None,
                         "display_version": "unknown",
@@ -470,14 +504,16 @@ class GeodeVersionBot(commands.Bot):
                 data = await res.json(content_type=None)
                 data = unwrap_payload(data)
 
-                snapshot = extract_mod_snapshot(mod_id, data)
+                snapshot = extract_mod_snapshot(mod.id, data, mod.label, mod.emoji)
                 snapshot["raw"] = data
-                return mod_id, snapshot
+                return mod.id, snapshot
 
         except Exception as e:
-            return mod_id, {
-                "id": mod_id,
-                "name": mod_id,
+            return mod.id, {
+                "id": mod.id,
+                "label": mod.label,
+                "emoji": mod.emoji,
+                "name": mod.label,
                 "author": None,
                 "version": None,
                 "display_version": "unknown",
@@ -492,7 +528,7 @@ class GeodeVersionBot(commands.Bot):
             }
 
     async def fetch_snapshots(self) -> dict[str, dict[str, Any]]:
-        results = await asyncio.gather(*(self.fetch_one_snapshot(mod_id) for mod_id in TRACKED_MOD_IDS))
+        results = await asyncio.gather(*(self.fetch_one_snapshot(mod) for mod in TRACKED_MODS))
         return dict(results)
 
     def apply_snapshot_to_state(self, snapshots: dict[str, dict[str, Any]]) -> list[str]:
@@ -552,7 +588,10 @@ class GeodeVersionBot(commands.Bot):
     def make_check_embed(self, snapshots: dict[str, dict[str, Any]], error: Optional[str] = None) -> discord.Embed:
         embed = discord.Embed(
             title="geode version checker",
-            description=f"live data from `{API_URL}`",
+            description=(
+                f"live data from `{API_URL}`\n"
+                f"tracked mods: **{len(TRACKED_MODS)}**"
+            ),
             colour=discord.Colour.blurple(),
             timestamp=datetime.now(timezone.utc),
         )
@@ -561,13 +600,13 @@ class GeodeVersionBot(commands.Bot):
             embed.add_field(name="warning", value=f"fetch error: `{error}`", inline=False)
 
         mods = self.state.get("mods", {})
-        for mod_id in TRACKED_MOD_IDS:
-            current = snapshots.get(mod_id)
-            saved = mods.get(mod_id) if isinstance(mods, dict) else None
+        for mod in TRACKED_MODS:
+            current = snapshots.get(mod.id)
+            saved = mods.get(mod.id) if isinstance(mods, dict) else None
 
             if not current:
                 embed.add_field(
-                    name=mod_id,
+                    name=f"{mod.emoji} {mod.label}",
                     value="could not parse this mod from the api response.",
                     inline=False,
                 )
@@ -580,25 +619,19 @@ class GeodeVersionBot(commands.Bot):
                     f"could not parse this mod from the api response.\n\n"
                     f"**raw node:**\n{raw_text}"
                 )
-                embed.add_field(name=mod_id, value=value[:1024], inline=False)
+                embed.add_field(
+                    name=f"{mod.emoji} {current.get('name') or mod.label}",
+                    value=value[:1024],
+                    inline=False,
+                )
                 continue
 
-            change = compare_versions(saved if isinstance(saved, dict) else None, current)
-            saved_line = version_line(saved if isinstance(saved, dict) else None)
-            status_line = current["status"] or ("pending" if current["pending"] else "released")
-            author = current.get("author") or "unknown"
-            name = current.get("name") or mod_id
-
-            field_value = (
-                f"**name:** {name}\n"
-                f"**id:** `{mod_id}`\n"
-                f"**author:** {author}\n"
-                f"**current:** {current['display_version']}\n"
-                f"**saved:** {saved_line}\n"
-                f"**status:** {status_line}\n"
-                f"**change:** {change}"
+            field_value = make_mod_card(current, saved if isinstance(saved, dict) else None)
+            embed.add_field(
+                name=f"{mod.emoji} {current.get('name') or mod.label}",
+                value=field_value[:1024],
+                inline=False,
             )
-            embed.add_field(name=name, value=field_value[:1024], inline=False)
 
         embed.set_footer(text="pending versions are shown but never written to saved state")
         return embed
@@ -606,6 +639,7 @@ class GeodeVersionBot(commands.Bot):
     def make_debugmods_embed(self, snapshots: dict[str, dict[str, Any]], error: Optional[str] = None) -> discord.Embed:
         embed = discord.Embed(
             title="parsed mod info",
+            description="snapshot details and parser output",
             colour=discord.Colour.dark_teal(),
             timestamp=datetime.now(timezone.utc),
         )
@@ -613,17 +647,17 @@ class GeodeVersionBot(commands.Bot):
         if error:
             embed.add_field(name="warning", value=f"fetch error: `{error}`", inline=False)
 
-        for mod_id in TRACKED_MOD_IDS:
-            snapshot = snapshots.get(mod_id)
+        for mod in TRACKED_MODS:
+            snapshot = snapshots.get(mod.id)
             if not snapshot:
-                embed.add_field(name=mod_id, value="not found in api payload.", inline=False)
+                embed.add_field(name=f"{mod.emoji} {mod.label}", value="not found in api payload.", inline=False)
                 continue
 
             if snapshot.get("parse_failed"):
                 raw = snapshot.get("raw")
                 raw_text = format_json_block(raw if raw is not None else {"note": "no matching node found"})
                 embed.add_field(
-                    name=mod_id,
+                    name=f"{mod.emoji} {mod.label}",
                     value=(
                         "parse failed.\n\n"
                         f"**raw node:**\n{raw_text}"
@@ -638,26 +672,35 @@ class GeodeVersionBot(commands.Bot):
                 version = item.get("version") or "unknown"
                 status = item.get("status") or ("pending" if item.get("pending") else "released")
                 suffix = " (pending)" if item.get("pending") else ""
-                candidate_lines.append(f"- {version}{suffix} | {status}")
+                candidate_lines.append(f"• `{version}`{suffix} — {status}")
 
             field_value = (
                 f"**name:** {snapshot.get('name')}\n"
-                f"**version:** {snapshot.get('version') or 'unknown'}\n"
-                f"**display:** {snapshot.get('display_version')}\n"
+                f"**id:** `{snapshot.get('id')}`\n"
+                f"**author:** {snapshot.get('author') or 'unknown'}\n"
+                f"**version:** `{snapshot.get('version') or 'unknown'}`\n"
+                f"**display:** `{snapshot.get('display_version')}`\n"
                 f"**status:** {snapshot.get('status')}\n"
                 f"**pending:** {snapshot.get('pending')}\n"
-                f"**candidates:**\n" + ("\n".join(candidate_lines) if candidate_lines else "- none parsed")
+                f"**candidates:**\n" + ("\n".join(candidate_lines) if candidate_lines else "• none parsed")
             )
-            embed.add_field(name=mod_id, value=field_value[:1024], inline=False)
+
+            embed.add_field(
+                name=f"{mod.emoji} {mod.label}",
+                value=field_value[:1024],
+                inline=False,
+            )
 
         return embed
 
     def make_debugstate_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="saved state",
+            description="current stored version cache",
             colour=discord.Colour.dark_gold(),
             timestamp=datetime.now(timezone.utc),
         )
+
         pretty = json.dumps(self.state, indent=2, ensure_ascii=False, sort_keys=True)
         if len(pretty) > 3900:
             pretty = pretty[:3900] + "\n..."
@@ -707,7 +750,6 @@ async def on_ready() -> None:
 def main() -> None:
     if not TOKEN:
         raise RuntimeError("DISCORD_TOKEN is not set")
-
     bot.run(TOKEN)
 
 
