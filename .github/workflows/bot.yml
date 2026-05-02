@@ -1,31 +1,29 @@
 name: run geode version bot
 
 on:
-workflow_dispatch:
-schedule:
-- cron: "*/30 * * * *"
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
 
 jobs:
-run-bot:
-runs-on: ubuntu-latest
+  run-bot:
+    runs-on: ubuntu-latest
 
-```
-steps:
-  - name: checkout repo
-    uses: actions/checkout@v4
+    steps:
+      - name: checkout repo
+        uses: actions/checkout@v4
 
-  - name: setup python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.11"
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-  - name: install dependencies
-    run: |
-      pip install discord.py aiohttp
+      - name: install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install discord.py aiohttp
 
-  - name: run bot
-    env:
-      DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-    run: |
-      python geode_version_checker_bot.py
-```
+      - name: run bot
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: python geode_version_checker_bot.py
