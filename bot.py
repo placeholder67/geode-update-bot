@@ -24,7 +24,7 @@ log = logging.getLogger("geode")
 version_re = re.compile(r"v?(\d+(?:\.\d+)+)", re.IGNORECASE)
 
 # =========================
-# MODS (ONLY 4)
+# MOD LIST (ONLY 4)
 # =========================
 
 @dataclass(frozen=True)
@@ -45,14 +45,6 @@ MODS = (
 # HELPERS
 # =========================
 
-def now():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def strip(s: str) -> str:
-    return re.sub(r"<[^>]+>", "", s or "")
-
-
 def get_text(d: dict, keys):
     for k in keys:
         v = d.get(k)
@@ -68,55 +60,68 @@ def unwrap(data: Any) -> dict:
 
 
 # =========================
-# PENDING DETECTION (FIXED)
-# =========================
-
-def is_pending(d: dict) -> bool:
-    if not isinstance(d, dict):
-        return False
-
-    for k in ("pending", "isPending", "is_pending"):
-        if isinstance(d.get(k), bool):
-            return d[k]
-
-    status = get_text(d, ("status",))
-    if status and "pending" in status.lower():
-        return True
-
-    text = get_text(d, ("description", "changelog", "notes"))
-    if text and "pending" in text.lower():
-        return True
-
-    return False
-
-
-# =========================
-# VERSION EXTRACTION (ROBUST)
+# 🔥 FIXED VERSION DETECTION
 # =========================
 
 def find_version(d: dict) -> Optional[str]:
     if not isinstance(d, dict):
         return None
 
-    for k in ("version", "latestVersion", "currentVersion"):
+    # direct fields
+    for k in ("version", "latestVersion", "currentVersion", "modVersion"):
         v = d.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
 
     # nested search
-    for k, v in d.items():
+    for v in d.values():
         if isinstance(v, dict):
             res = find_version(v)
             if res:
                 return res
 
-    text = get_text(d, ("changelog", "description"))
+    # changelog fallback
+    text = get_text(d, ("changelog", "description", "notes"))
     if text:
         m = version_re.search(text)
         if m:
             return m.group(1)
 
     return None
+
+
+# =========================
+# 🔥 FIXED PENDING DETECTION (IMPORTANT PART)
+# =========================
+
+def is_pending(d: dict) -> bool:
+    if not isinstance(d, dict):
+        return False
+
+    # explicit flags
+    for k in ("pending", "isPending", "is_pending"):
+        if isinstance(d.get(k), bool):
+            return d[k]
+
+    status = get_text(d, ("status", "state"))
+    if status and status.lower() in {"pending", "in review", "review"}:
+        return True
+
+    tags = d.get("tags") or d.get("categories")
+    if isinstance(tags, list):
+        joined = " ".join(map(str, tags)).lower()
+        if any(x in joined for x in ("pending", "beta", "wip", "review")):
+            return True
+
+    text = get_text(d, ("description", "changelog", "notes"))
+    if text and any(x in text.lower() for x in ("pending", "not released", "in review")):
+        return True
+
+    return False
+
+
+def is_released(version: Optional[str], pending: bool) -> bool:
+    return bool(version) and not pending
 
 
 # =========================
@@ -139,32 +144,34 @@ class Bot(commands.Bot):
         await super().close()
 
     # =========================
-    # LIVE FETCH (ALWAYS FRESH)
+    # FETCH
     # =========================
 
     async def fetch_mod(self, mod: Mod):
         try:
             async with self.session.get(api_url.format(mod.id)) as r:
                 data = unwrap(await r.json(content_type=None))
+
                 version = find_version(data)
                 pending = is_pending(data)
 
-                released = bool(version) and not pending
+                # 🔥 KEY FIX: echoclip becomes pending even if it has version 1.5.0
+                released = is_released(version, pending)
 
                 return {
                     "mod": mod,
                     "version": version or "unknown",
                     "pending": pending,
                     "released": released,
-                    "raw": data,
                 }
+
         except Exception as e:
             return {
                 "mod": mod,
                 "version": "error",
                 "pending": False,
                 "released": False,
-                "raw": {"error": str(e)},
+                "error": str(e),
             }
 
     async def fetch_all(self):
@@ -186,9 +193,9 @@ class Bot(commands.Bot):
         for r in results:
             m = r["mod"]
 
-            if r["pending"]:
+            if r.get("pending"):
                 status = "⏳ pending"
-            elif r["version"] in ("unknown", "error") or not r["version"]:
+            elif r["version"] in ("unknown", "error"):
                 status = "❓ unknown"
             else:
                 status = "✅ released"
@@ -198,14 +205,13 @@ class Bot(commands.Bot):
             )
 
         e.description = "\n".join(lines)
-        e.set_footer(text="live api data (no cache)")
         return e
 
 
 bot = Bot()
 
 # =========================
-# SLASH COMMANDS (FIXED)
+# COMMANDS
 # =========================
 
 @bot.tree.command(name="checkforupdates", description="live geode mod status")
@@ -216,23 +222,14 @@ async def checkforupdates(interaction: discord.Interaction):
     await interaction.followup.send(embed=bot.build_embed(data))
 
 
-@bot.tree.command(name="debugmods", description="raw api output (live)")
+@bot.tree.command(name="debugmods", description="raw api debug")
 async def debugmods(interaction: discord.Interaction):
     await interaction.response.defer()
 
     data = await bot.fetch_all()
-
-    out = ""
-    for r in data:
-        out += f"\n\n=== {r['mod'].name} ===\n{r['raw']}"
-
-    await interaction.followup.send(out[:1900])
-
-
-@bot.tree.command(name="debugstate", description="not used anymore (live only)")
-async def debugstate(interaction: discord.Interaction):
-    await interaction.response.defer()
-    await interaction.followup.send("state disabled — everything is live now")
+    await interaction.followup.send(
+        "\n\n".join(f"{r['mod'].name}: {r}" for r in data)[:1900]
+    )
 
 
 # =========================
@@ -241,7 +238,7 @@ async def debugstate(interaction: discord.Interaction):
 
 def main():
     if not token:
-        raise RuntimeError("DISCORD_TOKEN missing")
+        raise RuntimeError("missing DISCORD_TOKEN")
     bot.run(token)
 
 
