@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -103,31 +104,6 @@ def matches_mod_id(node: dict[str, Any], target_id: str) -> bool:
         if isinstance(value, str) and value.strip().lower() == target:
             return True
     return False
-
-
-def find_mod_node(payload: Any, target_id: str) -> Optional[dict[str, Any]]:
-    if isinstance(payload, dict):
-        for key in (target_id, target_id.lower(), target_id.upper()):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                return value
-
-        for wrapper_key in ("mods", "data", "items", "results", "entries"):
-            wrapped = payload.get(wrapper_key)
-            if isinstance(wrapped, dict):
-                for key, value in wrapped.items():
-                    if isinstance(key, str) and key.strip().lower() == target_id.lower() and isinstance(value, dict):
-                        return value
-            elif isinstance(wrapped, list):
-                for item in wrapped:
-                    if isinstance(item, dict) and matches_mod_id(item, target_id):
-                        return item
-
-    for node in walk_json(payload):
-        if isinstance(node, dict) and matches_mod_id(node, target_id):
-            return node
-
-    return None
 
 
 def _collect_candidates(mod: dict[str, Any]) -> list[dict[str, Any]]:
@@ -269,6 +245,7 @@ def extract_mod_snapshot(mod_id: str, mod_node: dict[str, Any]) -> dict[str, Any
         "release_date": current["release_date"],
         "raw": mod_node,
         "version_candidates": [_compact_candidate(c) for c in _collect_candidates(mod_node)],
+        "parse_failed": chosen is None,
     }
 
 
@@ -376,48 +353,64 @@ class GeodeVersionBot(commands.Bot):
 
     async def close(self) -> None:
         try:
-            self.poll_versions.cancel()
+            if self.poll_versions.is_running():
+                self.poll_versions.cancel()
         except Exception:
             pass
         if self.session and not self.session.closed:
             await self.session.close()
         await super().close()
 
-    async def fetch_api_payload(self) -> Any:
+    async def fetch_snapshots(self) -> dict[str, dict[str, Any]]:
         if not self.session:
             raise RuntimeError("http session not ready")
 
-        async with self.session.get(API_URL) as response:
-            response.raise_for_status()
-            return await response.json(content_type=None)
+        snapshots: dict[str, dict[str, Any]] = {}
 
-async def fetch_snapshots(self) -> dict[str, dict[str, Any]]:
-    snapshots = {}
+        for mod_id in TRACKED_MOD_IDS:
+            try:
+                async with self.session.get(API_URL.format(mod_id)) as res:
+                    if res.status != 200:
+                        snapshots[mod_id] = {
+                            "id": mod_id,
+                            "name": mod_id,
+                            "author": None,
+                            "version": None,
+                            "display_version": "unknown",
+                            "pending": False,
+                            "released": False,
+                            "status": f"http {res.status}",
+                            "release_date": None,
+                            "raw": await res.text(),
+                            "version_candidates": [],
+                            "parse_failed": True,
+                            "error": f"http {res.status}",
+                        }
+                        continue
 
-    for mod_id in TRACKED_MOD_IDS:
-        try:
-            async with self.session.get(API_URL.format(mod_id)) as res:
-                if res.status != 200:
-                    snapshots[mod_id] = {
-                        "error": f"http {res.status}",
-                        "raw": await res.text()
-                    }
-                    continue
+                    data = await res.json(content_type=None)
+                    snapshot = extract_mod_snapshot(mod_id, data)
+                    snapshot["raw"] = data
+                    snapshots[mod_id] = snapshot
 
-                data = await res.json(content_type=None)
+            except Exception as e:
+                snapshots[mod_id] = {
+                    "id": mod_id,
+                    "name": mod_id,
+                    "author": None,
+                    "version": None,
+                    "display_version": "unknown",
+                    "pending": False,
+                    "released": False,
+                    "status": "error",
+                    "release_date": None,
+                    "raw": {},
+                    "version_candidates": [],
+                    "parse_failed": True,
+                    "error": str(e),
+                }
 
-                snapshot = extract_mod_snapshot(mod_id, data)
-                snapshot["raw"] = data
-
-                snapshots[mod_id] = snapshot
-
-        except Exception as e:
-            snapshots[mod_id] = {
-                "error": str(e),
-                "raw": {}
-            }
-
-    return snapshots
+        return snapshots
 
     def apply_snapshot_to_state(self, snapshots: dict[str, dict[str, Any]]) -> list[str]:
         changed: list[str] = []
