@@ -9,19 +9,11 @@ import aiohttp
 import discord
 from discord.ext import commands
 
-# =========================
-# CONFIG
-# =========================
-
 token = os.getenv("DISCORD_TOKEN")
 api_url = "https://api.geode-sdk.org/v1/mods/{}"
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("geode")
-
-# =========================
-# MODS
-# =========================
 
 @dataclass(frozen=True)
 class Mod:
@@ -37,71 +29,29 @@ MODS = (
     Mod("axiom.cube-abuse", "Cube Abuse", "🟡"),
 )
 
-
-# =========================
-# HELPERS
-# =========================
-
 def unwrap(data: Any) -> dict:
     if isinstance(data, dict) and isinstance(data.get("payload"), dict):
         return data["payload"]
     return data if isinstance(data, dict) else {}
 
 
-def get_text(d: dict, keys):
-    for k in keys:
-        v = d.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip().lower()
-    return None
-
-
-# =========================
-# 🔥 REAL PENDING DETECTION (FIXED)
-# =========================
 
 def is_pending(d: dict) -> bool:
     if not isinstance(d, dict):
         return False
 
-    # 1. explicit flags
-    for k in ("pending", "isPending", "is_pending"):
-        if d.get(k) is True:
-            return True
-
-    # 2. status / state tells the truth
-    status = get_text(d, ("status", "state"))
-    if status:
-        if any(x in status for x in ("pending", "unlisted", "not indexed", "indexing", "review")):
-            return True
-
-    # 3. index presence logic (IMPORTANT FIX FOR YOUR CASE)
-    # if mod is not "released" but exists → still pending
-    released = d.get("released")
-    if released is False:
+    status = d.get("versions")[0].get("status")
+    if status == "accepted":
+        return False
+    else:
         return True
 
-    # 4. api hint fields
-    if d.get("listed") is False:
-        return True
 
-    if d.get("indexed") is False:
-        return True
-
-    return False
-
-
-# =========================
-# VERSION (ONLY FOR DISPLAY)
-# =========================
-
+# find latest ver
 def find_version(d: dict) -> Optional[str]:
     return d.get("versions")[0].get("version")
 
 
-# =========================
-# BOT
-# =========================
 
 class Bot(commands.Bot):
     def __init__(self):
@@ -118,10 +68,7 @@ class Bot(commands.Bot):
             await self.session.close()
         await super().close()
 
-    # =========================
-    # FETCH
-    # =========================
-
+    # api call
     async def fetch_mod(self, mod: Mod):
         try:
             async with self.session.get(api_url.format(mod.id)) as r:
@@ -147,10 +94,7 @@ class Bot(commands.Bot):
     async def fetch_all(self):
         return await asyncio.gather(*(self.fetch_mod(m) for m in MODS))
 
-    # =========================
-    # EMBED
-    # =========================
-
+    # embeds
     def build_embed(self, results):
         e = discord.Embed(
             title="geode version checker",
@@ -164,11 +108,11 @@ class Bot(commands.Bot):
             m = r["mod"]
 
             if r["pending"]:
-                status = "⏳ pending (not indexed)"
+                status = "⏳ Pending"
             elif r["version"] == "error":
                 status = "❌ error"
             else:
-                status = "✅ indexed"
+                status = "✅ On the index"
 
             lines.append(
                 f"{m.emoji} **{m.name}** — `{r['version']}` • {status}"
@@ -181,9 +125,7 @@ class Bot(commands.Bot):
 bot = Bot()
 
 
-# =========================
-# COMMANDS
-# =========================
+# cmds
 
 @bot.tree.command(name="checkforupdates", description="live geode mod status")
 async def checkforupdates(interaction: discord.Interaction):
@@ -191,21 +133,6 @@ async def checkforupdates(interaction: discord.Interaction):
 
     data = await bot.fetch_all()
     await interaction.followup.send(embed=bot.build_embed(data))
-
-
-@bot.tree.command(name="debugmods", description="raw api output")
-async def debugmods(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    data = await bot.fetch_all()
-    await interaction.followup.send(
-        "\n\n".join(f"{r['mod'].name}: {r}" for r in data)[:1900]
-    )
-
-
-# =========================
-# RUN
-# =========================
 
 def main():
     if not token:
