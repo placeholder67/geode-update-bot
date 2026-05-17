@@ -3,6 +3,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 import aiohttp
 import discord
@@ -13,6 +14,7 @@ api_url = "https://api.geode-sdk.org/v1/mods/{}"
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("geode")
+
 
 @dataclass(frozen=True)
 class Mod:
@@ -28,11 +30,11 @@ MODS = (
     Mod("axiom.cube-abuse", "Cube Abuse", "🟡"),
 )
 
+
 def unwrap(data: Any) -> dict:
     if isinstance(data, dict) and isinstance(data.get("payload"), dict):
         return data["payload"]
     return data if isinstance(data, dict) else {}
-
 
 
 def is_pending(d: dict) -> bool:
@@ -188,6 +190,7 @@ async def checkforupdates(interaction: discord.Interaction):
 
     data = await bot.fetch_all()
     await interaction.followup.send(embed=bot.build_embed(data))
+
 
 def main():
     if not token:
