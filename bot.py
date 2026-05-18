@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import textwrap
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -139,17 +138,6 @@ def format_error_reason(error: Any) -> str:
         text = "unknown error"
 
     return text[:180]
-
-
-def wrap_line(text: str, width: int = 55) -> str:
-    return "\n".join(
-        textwrap.wrap(
-            text,
-            width=width,
-            break_long_words=False,
-            break_on_hyphens=False,
-        )
-    )
 
 
 class Bot(commands.Bot):
@@ -290,7 +278,7 @@ class Bot(commands.Bot):
                 else "unknown"
             )
 
-            line = (
+            lines.append(
                 f"{m.emoji} "
                 f"[{m.name}]({r['url']}) — "
                 f"{r['version']} • "
@@ -298,13 +286,13 @@ class Bot(commands.Bot):
                 f"{status}"
             )
 
-            lines.append(wrap_line(line))
-
-        e.description = "\n\n".join(lines)
+        e.description = "\n".join(lines)
 
         e.set_footer(
-            text=f"last updated • "
-                 f"{datetime.now().strftime('%H:%M:%S UTC')}"
+            text=(
+                f"last updated • "
+                f"{datetime.now().strftime('%H:%M:%S UTC')}"
+            )
         )
 
         return e
