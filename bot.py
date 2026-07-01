@@ -1,5 +1,5 @@
 """
-note: geode api so i dont forget: https://api.geode-sdk.org/swagger/
+geode api so i dont forget: https://api.geode-sdk.org/swagger/
 """
 
 import asyncio
@@ -359,13 +359,15 @@ async def checkforupdates_mod_autocomplete(
 
 
 # ==========================================
-# GEODE DEVELOPER TOOLS (/dev command group)
+# GEODE DEVELOPER TOOLS (/dev subcommand group)
 # ==========================================
 
+# 1. THIS CREATES THE ROOT COMMAND: /dev
 dev_group = discord.app_commands.Group(name="dev", description="Developer utilities for the Geode SDK")
 bot.tree.add_command(dev_group)
 
 
+# 2. THIS BECOMES: /dev docs <topic>
 @dev_group.command(name="docs", description="Sends a link to the official Geode SDK Documentation.")
 @discord.app_commands.describe(topic="Fetch a specific topic/search term")
 async def dev_docs(interaction: discord.Interaction, topic: Optional[str] = None):
@@ -378,6 +380,7 @@ async def dev_docs(interaction: discord.Interaction, topic: Optional[str] = None
         await interaction.response.send_message(f"📚 Official Geode SDK Documentation: {base_url}")
 
 
+# 3. THIS BECOMES: /dev cli
 @dev_group.command(name="cli", description="Quick-start snippets for the Geode CLI.")
 async def dev_cli(interaction: discord.Interaction):
     embed = discord.Embed(title="Geode CLI Quick-Start", color=discord.Color.green())
@@ -389,6 +392,7 @@ async def dev_cli(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+# 4. THIS BECOMES: /dev status
 @dev_group.command(name="status", description="Displays current Geode API version and Server Status.")
 async def dev_status(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -426,6 +430,7 @@ async def dev_status(interaction: discord.Interaction):
     await interaction.followup.send(embed=embed)
 
 
+# 5. THIS BECOMES: /dev template
 @dev_group.command(name="template", description="Provides a standard 'Hello World' Geode boilerplate.")
 async def dev_template(interaction: discord.Interaction):
     code = (
@@ -445,6 +450,7 @@ async def dev_template(interaction: discord.Interaction):
     await interaction.response.send_message(f"Here is a standard Geode `Hello World` boilerplate:\n{code}")
 
 
+# 6. THIS BECOMES: /dev repo <mod_id>
 @dev_group.command(name="repo", description="Pulls the GitHub/Source code link for a specific mod.")
 @discord.app_commands.describe(mod_id="The ID of the mod (e.g. geode.loader)")
 async def dev_repo(interaction: discord.Interaction, mod_id: str):
@@ -470,6 +476,7 @@ async def dev_repo(interaction: discord.Interaction, mod_id: str):
         await interaction.followup.send(f"❌ Error fetching mod repository: {format_error_reason(e)}")
 
 
+# 7. THIS BECOMES: /dev help
 @dev_group.command(name="help", description="Lists common C++ or CMake errors and troubleshooting steps.")
 async def dev_help(interaction: discord.Interaction):
     embed = discord.Embed(title="Geode Developer - Common Issues", color=discord.Color.red())
