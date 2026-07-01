@@ -1,5 +1,5 @@
 """
-geode api so i dont forget: https://api.geode-sdk.org/swagger/
+geode api because: https://api.geode-sdk.org/swagger/
 """
 
 import asyncio
@@ -359,153 +359,158 @@ async def checkforupdates_mod_autocomplete(
 
 
 # ==========================================
-# GEODE DEVELOPER TOOLS (/dev subcommand group)
+# GEODE DEVELOPER TOOLS (/dev command)
 # ==========================================
 
-# 1. THIS CREATES THE ROOT COMMAND: /dev
-dev_group = discord.app_commands.Group(name="dev", description="Developer utilities for the Geode SDK")
-bot.tree.add_command(dev_group)
+@bot.tree.command(name="dev", description="Developer utilities for the Geode SDK")
+@discord.app_commands.describe(
+    command="The developer utility command to run",
+    topic="Fetch a specific topic/search term (only for 'docs')",
+    mod_id="The ID of the mod (only for 'repo', e.g., geode.loader)"
+)
+@discord.app_commands.choices(command=[
+    discord.app_commands.Choice(name="docs", value="docs"),
+    discord.app_commands.Choice(name="cli", value="cli"),
+    discord.app_commands.Choice(name="status", value="status"),
+    discord.app_commands.Choice(name="template", value="template"),
+    discord.app_commands.Choice(name="repo", value="repo"),
+    discord.app_commands.Choice(name="help", value="help"),
+])
+async def dev(
+    interaction: discord.Interaction, 
+    command: discord.app_commands.Choice[str], 
+    topic: Optional[str] = None, 
+    mod_id: Optional[str] = None
+):
+    cmd = command.value
 
+    # --- DOCS ---
+    if cmd == "docs":
+        base_url = "https://docs.geode-sdk.org/"
+        if topic:
+            query = urllib.parse.quote(topic)
+            await interaction.response.send_message(f"📚 Search the Geode Docs for **{topic}**: {base_url}?q={query}")
+        else:
+            await interaction.response.send_message(f"📚 Official Geode SDK Documentation: {base_url}")
 
-# 2. THIS BECOMES: /dev docs <topic>
-@dev_group.command(name="docs", description="Sends a link to the official Geode SDK Documentation.")
-@discord.app_commands.describe(topic="Fetch a specific topic/search term")
-async def dev_docs(interaction: discord.Interaction, topic: Optional[str] = None):
-    base_url = "https://docs.geode-sdk.org/"
-    if topic:
-        # VitePress uses standard query parameters for some native searches, or directs the user nicely
-        query = urllib.parse.quote(topic)
-        await interaction.response.send_message(f"📚 Search the Geode Docs for **{topic}**: {base_url}?q={query}")
-    else:
-        await interaction.response.send_message(f"📚 Official Geode SDK Documentation: {base_url}")
+    # --- CLI ---
+    elif cmd == "cli":
+        embed = discord.Embed(title="Geode CLI Quick-Start", color=discord.Color.green())
+        embed.add_field(name="`geode new`", value="Create a new Geode project with the setup wizard.", inline=False)
+        embed.add_field(name="`geode build`", value="Configure and build the current project.", inline=False)
+        embed.add_field(name="`geode package`", value="Package the compiled mod into a `.geode` file.", inline=False)
+        embed.add_field(name="`geode run`", value="Run Geometry Dash with Geode.", inline=False)
+        embed.add_field(name="`geode profile`", value="Manage your Geometry Dash profiles.", inline=False)
+        await interaction.response.send_message(embed=embed)
 
+    # --- STATUS ---
+    elif cmd == "status":
+        await interaction.response.defer()
+        
+        api_status = "Unknown"
+        loader_ver = "Unknown"
 
-# 3. THIS BECOMES: /dev cli
-@dev_group.command(name="cli", description="Quick-start snippets for the Geode CLI.")
-async def dev_cli(interaction: discord.Interaction):
-    embed = discord.Embed(title="Geode CLI Quick-Start", color=discord.Color.green())
-    embed.add_field(name="`geode new`", value="Create a new Geode project with the setup wizard.", inline=False)
-    embed.add_field(name="`geode build`", value="Configure and build the current project.", inline=False)
-    embed.add_field(name="`geode package`", value="Package the compiled mod into a `.geode` file.", inline=False)
-    embed.add_field(name="`geode run`", value="Run Geometry Dash with Geode.", inline=False)
-    embed.add_field(name="`geode profile`", value="Manage your Geometry Dash profiles.", inline=False)
-    await interaction.response.send_message(embed=embed)
-
-
-# 4. THIS BECOMES: /dev status
-@dev_group.command(name="status", description="Displays current Geode API version and Server Status.")
-async def dev_status(interaction: discord.Interaction):
-    await interaction.response.defer()
-    
-    api_status = "Unknown"
-    loader_ver = "Unknown"
-
-    try:
-        # Check general API health
-        async with bot.session.get("https://api.geode-sdk.org/") as r:
-            if r.status in (200, 404): # If it responds with anything properly routed, it's alive
-                api_status = "✅ Online"
-            else:
-                api_status = f"⚠️ HTTP {r.status}"
-    except Exception:
-        api_status = "❌ Offline / Unreachable"
-
-    try:
-        # Fetch the latest loader version using the standard mods endpoint
-        async with bot.session.get(api_url.format("geode.loader")) as r:
-            if r.status == 200:
-                data = await r.json()
-                payload = data.get("payload", {})
-                versions = payload.get("versions", [])
-                if versions:
-                    loader_ver = versions[0].get("version", "Unknown")
-    except Exception:
-        pass
-
-    embed = discord.Embed(title="Geode Index & Server Status", color=discord.Color.blurple())
-    embed.add_field(name="Geode Index API", value=api_status, inline=True)
-    embed.add_field(name="Latest Loader Ver", value=loader_ver, inline=True)
-    embed.add_field(name="API Documentation", value="[Swagger UI](https://api.geode-sdk.org/swagger/)", inline=False)
-    
-    await interaction.followup.send(embed=embed)
-
-
-# 5. THIS BECOMES: /dev template
-@dev_group.command(name="template", description="Provides a standard 'Hello World' Geode boilerplate.")
-async def dev_template(interaction: discord.Interaction):
-    code = (
-        "```cpp\n"
-        "#include <Geode/Geode.hpp>\n"
-        "#include <Geode/modify/MenuLayer.hpp>\n\n"
-        "using namespace geode::prelude;\n\n"
-        "class $modify(MyMenuLayer, MenuLayer) {\n"
-        "    bool init() {\n"
-        "        if (!MenuLayer::init()) return false;\n\n"
-        "        FLAlertLayer::create(\"Geode\", \"Hello World from Geode!\", \"OK\")->show();\n\n"
-        "        return true;\n"
-        "    }\n"
-        "};\n"
-        "```"
-    )
-    await interaction.response.send_message(f"Here is a standard Geode `Hello World` boilerplate:\n{code}")
-
-
-# 6. THIS BECOMES: /dev repo <mod_id>
-@dev_group.command(name="repo", description="Pulls the GitHub/Source code link for a specific mod.")
-@discord.app_commands.describe(mod_id="The ID of the mod (e.g. geode.loader)")
-async def dev_repo(interaction: discord.Interaction, mod_id: str):
-    await interaction.response.defer()
-    
-    try:
-        async with bot.session.get(api_url.format(mod_id)) as r:
-            if r.status == 200:
-                data = await r.json()
-                payload = data.get("payload", {})
-                links = payload.get("links", {})
-                source_url = links.get("source")
-                
-                if source_url:
-                    await interaction.followup.send(f"🔗 **Source code for `{mod_id}`:**\n{source_url}")
+        try:
+            async with bot.session.get("https://api.geode-sdk.org/") as r:
+                if r.status in (200, 404):
+                    api_status = "✅ Online"
                 else:
-                    await interaction.followup.send(f"❌ No source code link was found on the index for `{mod_id}`.")
-            elif r.status == 404:
-                await interaction.followup.send(f"❌ Mod `{mod_id}` not found on the index.")
-            else:
-                await interaction.followup.send(f"❌ API Error: HTTP {r.status}")
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error fetching mod repository: {format_error_reason(e)}")
+                    api_status = f"⚠️ HTTP {r.status}"
+        except Exception:
+            api_status = "❌ Offline / Unreachable"
 
+        try:
+            async with bot.session.get(api_url.format("geode.loader")) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    payload = data.get("payload", {})
+                    versions = payload.get("versions", [])
+                    if versions:
+                        loader_ver = versions[0].get("version", "Unknown")
+        except Exception:
+            pass
 
-# 7. THIS BECOMES: /dev help
-@dev_group.command(name="help", description="Lists common C++ or CMake errors and troubleshooting steps.")
-async def dev_help(interaction: discord.Interaction):
-    embed = discord.Embed(title="Geode Developer - Common Issues", color=discord.Color.red())
-    embed.add_field(
-        name="Missing Headers / Bindings Not Found", 
-        value="Ensure you ran `geode build` (or your CMake configure step) to generate the GD bindings. If your IDE still warns, try reloading your CMake project.", 
-        inline=False
-    )
-    embed.add_field(
-        name="CMake Not Found", 
-        value="Make sure CMake is installed and added to your system `PATH` variable.", 
-        inline=False
-    )
-    embed.add_field(
-        name="Linker Errors (LNK2001 / LNK2019)", 
-        value="Usually caused by an incorrect function signature inside your `$modify` block, or missing a `GEODE_API` macro on an exported class.", 
-        inline=False
-    )
-    embed.add_field(
-        name="Game Crashes Immediately", 
-        value="Double check your dependencies in `mod.json` and ensure you aren't trying to access layers before they are fully initialized.", 
-        inline=False
-    )
-    embed.add_field(
-        name="Need More Info?", 
-        value="Check out the [Troubleshooting Guide](https://docs.geode-sdk.org/troubleshooting) in the official docs.", 
-        inline=False
-    )
-    await interaction.response.send_message(embed=embed)
+        embed = discord.Embed(title="Geode Index & Server Status", color=discord.Color.blurple())
+        embed.add_field(name="Geode Index API", value=api_status, inline=True)
+        embed.add_field(name="Latest Loader Ver", value=loader_ver, inline=True)
+        embed.add_field(name="API Documentation", value="[Swagger UI](https://api.geode-sdk.org/swagger/)", inline=False)
+        
+        await interaction.followup.send(embed=embed)
+
+    # --- TEMPLATE ---
+    elif cmd == "template":
+        code = (
+            "```cpp\n"
+            "#include <Geode/Geode.hpp>\n"
+            "#include <Geode/modify/MenuLayer.hpp>\n\n"
+            "using namespace geode::prelude;\n\n"
+            "class $modify(MyMenuLayer, MenuLayer) {\n"
+            "    bool init() {\n"
+            "        if (!MenuLayer::init()) return false;\n\n"
+            "        FLAlertLayer::create(\"Geode\", \"Hello World from Geode!\", \"OK\")->show();\n\n"
+            "        return true;\n"
+            "    }\n"
+            "};\n"
+            "```"
+        )
+        await interaction.response.send_message(f"Here is a standard Geode `Hello World` boilerplate:\n{code}")
+
+    # --- REPO ---
+    elif cmd == "repo":
+        if not mod_id:
+            await interaction.response.send_message("❌ Please provide a `mod_id` to use the repo command.", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+        
+        try:
+            async with bot.session.get(api_url.format(mod_id)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    payload = data.get("payload", {})
+                    links = payload.get("links", {})
+                    source_url = links.get("source")
+                    
+                    if source_url:
+                        await interaction.followup.send(f"🔗 **Source code for `{mod_id}`:**\n{source_url}")
+                    else:
+                        await interaction.followup.send(f"❌ No source code link was found on the index for `{mod_id}`.")
+                elif r.status == 404:
+                    await interaction.followup.send(f"❌ Mod `{mod_id}` not found on the index.")
+                else:
+                    await interaction.followup.send(f"❌ API Error: HTTP {r.status}")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error fetching mod repository: {format_error_reason(e)}")
+
+    # --- HELP ---
+    elif cmd == "help":
+        embed = discord.Embed(title="Geode Developer - Common Issues", color=discord.Color.red())
+        embed.add_field(
+            name="Missing Headers / Bindings Not Found", 
+            value="Ensure you ran `geode build` (or your CMake configure step) to generate the GD bindings. If your IDE still warns, try reloading your CMake project.", 
+            inline=False
+        )
+        embed.add_field(
+            name="CMake Not Found", 
+            value="Make sure CMake is installed and added to your system `PATH` variable.", 
+            inline=False
+        )
+        embed.add_field(
+            name="Linker Errors (LNK2001 / LNK2019)", 
+            value="Usually caused by an incorrect function signature inside your `$modify` block, or missing a `GEODE_API` macro on an exported class.", 
+            inline=False
+        )
+        embed.add_field(
+            name="Game Crashes Immediately", 
+            value="Double check your dependencies in `mod.json` and ensure you aren't trying to access layers before they are fully initialized.", 
+            inline=False
+        )
+        embed.add_field(
+            name="Need More Info?", 
+            value="Check out the [Troubleshooting Guide](https://docs.geode-sdk.org/troubleshooting) in the official docs.", 
+            inline=False
+        )
+        await interaction.response.send_message(embed=embed)
 
 
 def main():
