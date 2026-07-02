@@ -390,6 +390,24 @@ class Bot(commands.Bot):
         await self.tree.sync()
         log.info("slash commands synced")
 
+        async def update_presence(self):
+        await self.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name=f"the geode index <3 | {len(self.guilds):,} servers"
+            )
+        )
+
+    async def on_ready(self):
+        await self.update_presence()
+        log.info(f"logged in as {self.user}")
+
+    async def on_guild_join(self, guild):
+        await self.update_presence()
+
+    async def on_guild_remove(self, guild):
+        await self.update_presence()
+
     async def close(self):
         if self.session:
             await self.session.close()
