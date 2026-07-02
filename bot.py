@@ -170,6 +170,38 @@ def find_description(d: dict) -> str:
             
     return "no description"
 
+def find_name(d: dict, mod_id: str) -> str:
+    """Robustly dig for the mod title."""
+    if not isinstance(d, dict):
+        return mod_id
+        
+    if d.get("name") and isinstance(d.get("name"), str):
+        return d["name"]
+        
+    versions = d.get("versions")
+    if isinstance(versions, list) and versions:
+        v = versions[0]
+        if isinstance(v, dict) and v.get("name") and isinstance(v.get("name"), str):
+            return v["name"]
+            
+    return mod_id
+
+def find_logo(d: dict) -> Optional[str]:
+    """Robustly dig for the mod logo URL."""
+    if not isinstance(d, dict):
+        return None
+        
+    if d.get("logo") and isinstance(d.get("logo"), str):
+        return d["logo"]
+        
+    versions = d.get("versions")
+    if isinstance(versions, list) and versions:
+        v = versions[0]
+        if isinstance(v, dict) and v.get("logo") and isinstance(v.get("logo"), str):
+            return v["logo"]
+            
+    return None
+
 def format_error_reason(error: Any) -> str:
     text = str(error).strip() if error is not None else "unknown error"
     text = " ".join(text.split())
@@ -177,13 +209,14 @@ def format_error_reason(error: Any) -> str:
 
 def build_single_mod_embed(mod_data: dict) -> discord.Embed:
     mod_id = mod_data.get("id") or "unknown.id"
-    name = mod_data.get("name") or mod_id
+    name = find_name(mod_data, mod_id)
     dev = find_developer(mod_data)
     desc = find_description(mod_data)
     version = find_version(mod_data) or "unknown"
     downloads = find_downloads(mod_data)
     pending = is_pending(mod_data)
     url = find_mod_url(mod_data, mod_id)
+    logo = find_logo(mod_data)
 
     color = 0xffd700 if pending else 0x2ecc71
 
@@ -196,6 +229,9 @@ def build_single_mod_embed(mod_data: dict) -> discord.Embed:
     )
     
     embed.set_author(name=f"by {dev}")
+    
+    if logo:
+        embed.set_thumbnail(url=logo)
     
     dl_text = f"{downloads:,}" if downloads is not None else "n/a"
     status_text = "pending" if pending else "verified"
@@ -217,12 +253,11 @@ def build_list_embed(title: str, mods: list, page: int, total_pages: int) -> dis
     
     for i, m in enumerate(mods, 1):
         mod_id = m.get("id") or "unknown.id"
-        name = m.get("name") or mod_id
+        name = find_name(m, mod_id)
         dev = find_developer(m)
         dl = find_downloads(m) or 0
         desc = find_description(m)
         
-        # increased from 30 so you can actually read it
         if len(desc) > 85:
             desc = desc[:82] + "..."
             
@@ -241,7 +276,7 @@ class ModSelect(discord.ui.Select):
         options = []
         for m in mods:
             mod_id = (m.get("id") or "unknown.id")[:90]
-            name = (m.get("name") or mod_id)[:90]
+            name = find_name(m, mod_id)[:90]
             desc = find_description(m)
             
             # discord limits select descriptions to 100 chars
@@ -410,7 +445,7 @@ async def checkforupdates_mod_autocomplete(interaction: discord.Interaction, cur
     choices = []
     for m in mods:
         mod_id = m.get('id') or "unknown"
-        name = m.get('name') or mod_id
+        name = find_name(m, mod_id)
         choices.append(discord.app_commands.Choice(name=f"{name} ({mod_id})", value=mod_id))
         
     return choices[:25]
@@ -441,7 +476,7 @@ async def erymanthus(interaction: discord.Interaction, search: str):
 
         for m in mods:
             mod_id = m.get("id") or "unknown.id"
-            name = m.get("name") or mod_id
+            name = find_name(m, mod_id)
             desc = find_description(m)
             
             if len(desc) > 85:
@@ -598,13 +633,13 @@ async def dev(
             inline=False
         )
         await interaction.response.send_message(embed=embed)
-
+'''
 @bot.tree.command(name="ery_string_generator", description="ERY STRING GENERATOR")
 async def ery_string_generator(interaction: discord.Interaction):
     random_chars = ''.join(random.choices(string.ascii_uppercase + string.digits, k=64))
     magic_string = f"ERYMANTHUS_MAGIC_STRING_TRIGGER_ACCEPT_MY_MOD_{random_chars}"
     await interaction.response.send_message(f"```\n{magic_string}\n```")
-
+'''
 def main():
     if not token:
         raise RuntimeError("DISCORD_TOKEN missing")
