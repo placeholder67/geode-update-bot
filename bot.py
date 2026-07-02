@@ -76,6 +76,8 @@ def is_pending(d: dict) -> bool:
         return status not in ("accepted", "approved")
     return False
 
+# normalize values from different geode api responses because geode returns some fields differently depending on the endpoint
+
 def find_version(d: dict) -> Optional[str]:
     if not isinstance(d, dict):
         return None
@@ -92,6 +94,8 @@ def find_version(d: dict) -> Optional[str]:
             return first_version.get("version")
             
     return None
+
+# if you're asking why the code is so defensive its so bot doesnt break
 
 def find_developer(mod_data: dict) -> str:
     if not isinstance(mod_data, dict):
@@ -231,7 +235,7 @@ def build_single_mod_embed(mod_data: dict) -> discord.Embed:
     return embed
 
 def build_list_embeds(title: str, mods: list, page: int, total_pages: int, per_page: int) -> list[discord.Embed]:
-    # Use a separate starting embed strictly for the title so Discord doesn't force it down
+    # title embed cause it lowk built like that
     title_embed = discord.Embed(title=title, color=0x5865F2)
     embeds = [title_embed]
 
@@ -240,7 +244,7 @@ def build_list_embeds(title: str, mods: list, page: int, total_pages: int, per_p
         title_embed.set_footer(text=f"page {page}/{max(1, total_pages)}")
         return embeds
 
-    # Calculate starting index so numbering continues across pages
+    # continue numbering between pages
     start_idx = (page - 1) * per_page + 1
     
     for i, m in enumerate(mods, start_idx):
@@ -261,7 +265,7 @@ def build_list_embeds(title: str, mods: list, page: int, total_pages: int, per_p
         
         embeds.append(embed)
 
-    # Attach footer strictly to the last embed in the cluster
+    # footer only on the last embed
     embeds[-1].set_footer(text=f"page {page}/{max(1, total_pages)}")
 
     return embeds
@@ -556,6 +560,7 @@ async def erymanthus(
 )
 @discord.app_commands.choices(command=[
     discord.app_commands.Choice(name="repo", value="repo"),
+    # only true ppl know
     discord.app_commands.Choice(name="ery string generator", value="ery_string_generator"),
 ])
 async def dev(
