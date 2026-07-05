@@ -292,37 +292,49 @@ def build_single_mod_embed(mod_data: dict, ms_time: float, show_invite: bool) ->
     return embed
 
 def build_list_embeds(title: str, mods: list, page: int, total_pages: int, per_page: int, total_mods: int, ms_time: float, show_invite: bool) -> list[discord.Embed]:
-    embed = discord.Embed(title=title, color=0x5865F2, timestamp=datetime.now(timezone.utc))
-    embed.set_author(name=f"total mods: {total_mods:,}")
-
     footer_text = f"page {page}/{max(1, total_pages)} • ⏱️ {ms_time:.1f}ms"
     if show_invite:
         footer_text += " • run /invite to add me!"
 
     if not mods:
+        embed = discord.Embed(title=title, color=0x5865F2, timestamp=datetime.now(timezone.utc))
+        embed.set_author(name=f"total mods: {total_mods:,}")
         embed.description = "*couldn't find any mods with that.*"
         embed.set_footer(text=footer_text)
         return [embed]
-        
-    embed.set_thumbnail(url=find_logo(mods[0].get("id") or "unknown.id"))
 
+    embeds = []
     start_idx = (page - 1) * per_page + 1
+    
     for i, m in enumerate(mods, start_idx):
         mod_id = m.get("id") or "unknown.id"
         desc = find_description(m)
         desc = desc[:110] + "..." if len(desc) > 115 else desc
         
         mod_url = f"https://geode-sdk.org/mods/{mod_id}"
-        field_title = f"{i}. [{find_name(m, mod_id)}]({mod_url}) — by {find_developer(m)}"
-        field_body = (
+        
+        e = discord.Embed(color=0x5865F2)
+        
+        if i == start_idx:
+            e.title = title
+            e.set_author(name=f"total mods: {total_mods:,}")
+            
+        e.description = (
+            f"**{i}. [{find_name(m, mod_id)}]({mod_url})** — by {find_developer(m)}\n"
             f"📦 **id:** `{mod_id}`\n"
             f"⬇️ **downloads:** {find_downloads(m) or 0:,}\n"
             f"📖 *{desc}*"
         )
-        embed.add_field(name=field_title, value=field_body, inline=False)
+        
+        e.set_thumbnail(url=find_logo(mod_id))
 
-    embed.set_footer(text=footer_text)
-    return [embed]
+        if i == start_idx + len(mods) - 1:
+            e.timestamp = datetime.now(timezone.utc)
+            e.set_footer(text=footer_text)
+            
+        embeds.append(e)
+
+    return embeds
 
 class ModSelect(discord.ui.Select):
     def __init__(self, mods: list):
