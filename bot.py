@@ -303,6 +303,8 @@ def build_list_embeds(title: str, mods: list, page: int, total_pages: int, per_p
         embed.description = "*couldn't find any mods with that.*"
         embed.set_footer(text=footer_text)
         return [embed]
+        
+    embed.set_thumbnail(url=find_logo(mods[0].get("id") or "unknown.id"))
 
     start_idx = (page - 1) * per_page + 1
     for i, m in enumerate(mods, start_idx):
@@ -310,12 +312,12 @@ def build_list_embeds(title: str, mods: list, page: int, total_pages: int, per_p
         desc = find_description(m)
         desc = desc[:110] + "..." if len(desc) > 115 else desc
         
-        field_title = f"{i}. {find_name(m, mod_id)} — by {find_developer(m)}"
+        mod_url = f"https://geode-sdk.org/mods/{mod_id}"
+        field_title = f"{i}. [{find_name(m, mod_id)}]({mod_url}) — by {find_developer(m)}"
         field_body = (
             f"📦 **id:** `{mod_id}`\n"
             f"⬇️ **downloads:** {find_downloads(m) or 0:,}\n"
-            f"📖 *{desc}*\n"
-            f"[view on geode](https://geode-sdk.org/mods/{mod_id})"
+            f"📖 *{desc}*"
         )
         embed.add_field(name=field_title, value=field_body, inline=False)
 
@@ -428,16 +430,16 @@ class ModSearchView(discord.ui.View):
         
         return build_list_embeds(title, self.mods, self.page, self.total_pages, self.per_page, self.total_mods, ms, show_invite)
 
-    @discord.ui.button(label="<", style=discord.ButtonStyle.secondary, custom_id="prev")
+    @discord.ui.button(label="<", style=discord.ButtonStyle.secondary)
     async def btn_prev(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page -= 1
         await interaction.response.edit_message(embeds=await self.generate_view(), view=self)
 
-    @discord.ui.button(label="page...", style=discord.ButtonStyle.secondary, custom_id="jump")
+    @discord.ui.button(label="page...", style=discord.ButtonStyle.secondary)
     async def btn_jump(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(PageModal(self))
 
-    @discord.ui.button(label=">", style=discord.ButtonStyle.secondary, custom_id="next")
+    @discord.ui.button(label=">", style=discord.ButtonStyle.secondary)
     async def btn_next(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page += 1
         await interaction.response.edit_message(embeds=await self.generate_view(), view=self)
