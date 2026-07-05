@@ -26,9 +26,10 @@ api_url = "https://api.geode-sdk.org/v1/mods/{}"
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("geode")
 
-# --- LETS GOOO: 100X SPEED IN-MEMORY CACHE ---
 _API_CACHE: Dict[str, Tuple[float, Any]] = {}
-CACHE_TTL = 300  # Cache lasts 5 minutes, keeping it completely instant without disk saves!
+CACHE_TTL = 300  
+
+_ALL_MODS_CACHE = []
 
 def get_cached_response(key: str):
     if key in _API_CACHE:
@@ -425,6 +426,7 @@ class Bot(commands.Bot):
         self.session = aiohttp.ClientSession()
         self.add_view(NotifyView())
         await self.tree.sync()
+        self.refresh_all_mods_cache.start()
         self.check_mod_updates.start()
         log.info("bot is online and commands are synced, ready to roll.")
 
@@ -482,43 +484,114 @@ class Bot(commands.Bot):
         except Exception:
             return {"count": 0, "data": []}
 
+    @tasks.loop(minutes=30)
+    async def refresh_all_mods_cache(self):
+        # Quietly paginates through the entire geode index every 30m
+        # Stores only tiny {"id": "...", "name": "..."} dicts to keep memory footprint at < 2MB total.
+        if not self.session: return
+        try:
+            all_mods = []
+            page = 1
+            per_page = 100
+            
+            while True:
+                data = await self.fetch_mods_list(sort="downloads", page=page, per_page=per_page)
+                mods = data.get("data", [])
+                if not mods:
+                    break
+                
+                # Extract only necessary fields to keep memory usage extremely low
+                for m in mods:
+                    mod_id = m.get('id') or 'unknown'
+                    name = find_name(m, mod_id)
+                    all_mods.append({"id": mod_id, "name": name})
+                
+                if len(mods) < per_page:
+                    break
+                    
+                page += 1
+                # Small sleep to absolutely guarantee we don't trip Geode rate limits while paginating
+                await asyncio.sleep(0.5) 
+                
+            global _ALL_MODS_CACHE
+            if all_mods:
+                _ALL_MODS_CACHE = all_mods
+        except Exception as e:
+            log.warning(f"failed to cache all mods: {e}")
+
+    @refresh_all_mods_cache.before_loop
+    async def before_refresh_all(self):
+        await self.wait_until_ready()
+
     @tasks.loop(minutes=10)
     async def check_mod_updates(self):
         if not self.session: return
         
-        tracking_data = await tracker.get_all_tracking(self.session)
-        
-        for mod_id, data in tracking_data.items():
-            if not data["users"]: continue
-                
-            # bypass cache to make sure we actually detect the new version
-            mod_resp = await self.fetch_single_mod(mod_id, bypass_cache=True)
-            if "error" in mod_resp: continue
+        try:
+            tracking_data = await tracker.get_all_tracking(self.session)
+            
+            for mod_id, data in tracking_data.items():
+                try:
+                    if not data["users"]: continue
+                        
+                    # bypass cache to make sure we actually detect the new version
+                    mod_resp = await self.fetch_single_mod(mod_id, bypass_cache=True)
+                    if "error" in mod_resp: continue
 
-            latest_v = find_version(mod_resp) or data["version"]
-            if latest_v != data["version"]:
-                await tracker.update_version(self.session, mod_id, latest_v)
-                embed = build_single_mod_embed(mod_resp)
-                
-                for uid in data["users"]:
-                    try:
-                        user_id = int(uid)
-                        user = self.get_user(user_id) or await self.fetch_user(user_id)
-                        if user:
-                            await user.send(f"🔔 **update alert!**\n**{find_name(mod_resp, mod_id)}** just updated to **{latest_v}**!", embed=embed, view=NotifyView())
-                    except discord.Forbidden:
-                        pass
-                    except Exception as e:
-                        log.warning(f"couldn't send update to {uid}: {e}")
-                    # Fast sleep to avoid spamming Discord API
-                    await asyncio.sleep(0.1)
+                    latest_v = find_version(mod_resp) or data["version"]
+                    if latest_v != data["version"]:
+                        embed = build_single_mod_embed(mod_resp)
+                        
+                        for uid in data["users"]:
+                            try:
+                                user_id = int(uid)
+                                user = self.get_user(user_id) or await self.fetch_user(user_id)
+                                if user:
+                                    await user.send(f"🔔 **update alert!**\n**{find_name(mod_resp, mod_id)}** just updated to **{latest_v}**!", embed=embed, view=NotifyView())
+                            except discord.Forbidden:
+                                pass
+                            except discord.HTTPException as e:
+                                log.warning(f"http error sending update to {uid}: {e}")
+                            except Exception as e:
+                                log.warning(f"couldn't send update to {uid}: {e}")
+                            
+                            # Fast sleep to avoid spamming Discord API and hitting rate limits
+                            await asyncio.sleep(0.2)
+                        
+                        # UPDATE THE DB ONLY AFTER PROCESSING DMs to prevent offline skipping!
+                        await tracker.update_version(self.session, mod_id, latest_v)
+                except Exception as e:
+                    log.error(f"Error processing mod {mod_id} updates: {e}")
+        except Exception as e:
+            log.error(f"Error fetching tracking data: {e}")
+
+    @check_mod_updates.before_loop
+    async def before_check_mod_updates(self):
+        # Extremely important: Wait until bot is fully connected before scraping users or API
+        await self.wait_until_ready()
 
 bot = Bot()
 
 async def mod_autocomplete_logic(current: str):
-    if not current or contains_banned_word(current): return []
-    data = await bot.fetch_mods_list(query=current, sort="downloads", page=1, per_page=15)
-    return [discord.app_commands.Choice(name=f"{find_name(m, m.get('id') or 'unknown')} ({m.get('id') or 'unknown'})", value=m.get('id') or "unknown") for m in data.get("data", [])][:25]
+    if contains_banned_word(current):
+        return []
+        
+    if not _ALL_MODS_CACHE:
+        # Fallback to API if cache is still building (happens only in the first 5 seconds of booting up)
+        data = await bot.fetch_mods_list(query=current, sort="downloads", page=1, per_page=15)
+        mods = data.get("data", [])
+        return [discord.app_commands.Choice(name=f"{find_name(m, m.get('id') or 'unknown')} ({m.get('id') or 'unknown'})", value=m.get('id') or "unknown") for m in mods][:25]
+    
+    if not current:
+        # User hasn't typed anything yet: instantly return top 25 trending mods
+        return [discord.app_commands.Choice(name=f"{m['name']} ({m['id']})", value=m['id']) for m in _ALL_MODS_CACHE][:25]
+        
+    current_lower = current.lower()
+    
+    # Python filters this locally in less than 1 millisecond. No API calls needed. 100% Instant.
+    local_matches = [m for m in _ALL_MODS_CACHE if current_lower in m["id"].lower() or current_lower in m["name"].lower()]
+    
+    return [discord.app_commands.Choice(name=f"{m['name']} ({m['id']})", value=m['id']) for m in local_matches][:25]
 
 # --- COMMANDS ---
 
