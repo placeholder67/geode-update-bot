@@ -577,7 +577,8 @@ class Bot(commands.Bot):
                 for m in mods:
                     mod_id = m.get('id') or 'unknown'
                     name = find_name(m, mod_id)
-                    all_mods.append({"id": mod_id, "name": name})
+                    mod_tags = m.get('tags', [])
+                    all_mods.append({"id": mod_id, "name": name, "tags": mod_tags})
                 
                 if len(mods) < per_page: break
                 page += 1
@@ -704,11 +705,11 @@ async def mod_autocomplete_logic(current: str):
 
 @bot.tree.command(name="getindex", description="browse geode mods or search the index")
 @discord.app_commands.describe(
-    search="search mod by name", 
-    mod_id="specific mod to view", 
     sort_by="sort the mod list", 
     tags="filter by tag", 
     platform="filter by platform", 
+    search="search mod by name", 
+    mod_id="specific mod to view", 
     per_page="mods per page (1-5)"
 )
 @discord.app_commands.choices(sort_by=[
@@ -719,11 +720,11 @@ async def mod_autocomplete_logic(current: str):
 ])
 async def checkforupdates(
     interaction: discord.Interaction, 
-    search: Optional[str] = None, 
-    mod_id: Optional[str] = None, 
     sort_by: Optional[discord.app_commands.Choice[str]] = None, 
     tags: Optional[str] = None, 
     platform: Optional[str] = None, 
+    search: Optional[str] = None, 
+    mod_id: Optional[str] = None, 
     per_page: discord.app_commands.Range[int, 1, 5] = 3
 ):
     if search or sort_by or platform or tags: mod_id = None
@@ -780,7 +781,7 @@ async def checkforupdates_platform_autocomplete(interaction: discord.Interaction
     ][:25]
     return matches
 
-@bot.tree.command(name="daily", description="discover a hand-picked, featured geode mod of the day! (credit to nice_zack on discord)")
+@bot.tree.command(name="daily", description="discover a hand-picked, featured geode mod of the day! (credit to night_zack on discord)")
 async def daily_cmd(interaction: discord.Interaction):
     if not _ALL_MODS_CACHE:
         return await interaction.response.send_message("still warming up the mod database, give me a minute.", ephemeral=True)
@@ -790,7 +791,20 @@ async def daily_cmd(interaction: discord.Interaction):
     daily_seed = int(today.strftime("%Y%m%d"))
     rng = random.Random(daily_seed)
     
-    chosen = rng.choice(_ALL_MODS_CACHE)
+    # --- filter out bugfix mods before picking ---
+    valid_mods = []
+    for m in _ALL_MODS_CACHE:
+        tags = [str(t).lower() for t in m.get("tags", [])]
+        if "bugfix" not in tags:
+            valid_mods.append(m)
+            
+    if not valid_mods: 
+        valid_mods = _ALL_MODS_CACHE
+        
+    # --- sort by id to guarantee deterministic choices across cache updates ---
+    valid_mods = sorted(valid_mods, key=lambda x: x["id"])
+    
+    chosen = rng.choice(valid_mods)
     mod_id = chosen["id"]
     
     await interaction.response.defer()
