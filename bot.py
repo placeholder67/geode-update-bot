@@ -49,7 +49,7 @@ def get_cached_response(key: str):
 def set_cached_response(key: str, data: Any):
     _API_CACHE[key] = (time.time(), data)
 
-# banned words filter
+# --- banned words filter ---
 BANNED_WORDS = [
     "nigger", "nigga", "faggot", "fag", 
     "dyke", "tranny", "kys", "retard"
@@ -704,11 +704,11 @@ async def mod_autocomplete_logic(current: str):
 
 @bot.tree.command(name="getindex", description="browse geode mods or search the index")
 @discord.app_commands.describe(
+    search="search mod by name", 
+    mod_id="specific mod to view", 
     sort_by="sort the mod list", 
     tags="filter by tag", 
     platform="filter by platform", 
-    search="search mod by name", 
-    mod_id="specific mod to view", 
     per_page="mods per page (1-5)"
 )
 @discord.app_commands.choices(sort_by=[
@@ -719,16 +719,16 @@ async def mod_autocomplete_logic(current: str):
 ])
 async def checkforupdates(
     interaction: discord.Interaction, 
+    search: Optional[str] = None, 
+    mod_id: Optional[str] = None, 
     sort_by: Optional[discord.app_commands.Choice[str]] = None, 
     tags: Optional[str] = None, 
     platform: Optional[str] = None, 
-    search: Optional[str] = None, 
-    mod_id: Optional[str] = None, 
     per_page: discord.app_commands.Range[int, 1, 5] = 3
 ):
     if search or sort_by or platform or tags: mod_id = None
     if (search and contains_banned_word(search)) or (mod_id and contains_banned_word(mod_id)) or (tags and contains_banned_word(tags)):
-        return await interaction.response.send_message("let's keep the words clean.", ephemeral=True)
+        return await interaction.response.send_message("lets not", ephemeral=True)
 
     await interaction.response.defer()
 
@@ -779,6 +779,33 @@ async def checkforupdates_platform_autocomplete(interaction: discord.Interaction
         if current.lower() in name.lower() or current.lower() in val.lower()
     ][:25]
     return matches
+
+@bot.tree.command(name="daily", description="discover a hand-picked, featured geode mod of the day! (credit to nice_zack on discord)")
+async def daily_cmd(interaction: discord.Interaction):
+    if not _ALL_MODS_CACHE:
+        return await interaction.response.send_message("still warming up the mod database, give me a minute.", ephemeral=True)
+    
+    # --- lock the daily drop to the current date ---
+    today = datetime.now(timezone.utc).date()
+    daily_seed = int(today.strftime("%Y%m%d"))
+    rng = random.Random(daily_seed)
+    
+    chosen = rng.choice(_ALL_MODS_CACHE)
+    mod_id = chosen["id"]
+    
+    await interaction.response.defer()
+    
+    start = time.perf_counter()
+    mod_data = await bot.fetch_single_mod(mod_id)
+    ms = (time.perf_counter() - start) * 1000
+    
+    if "error" in mod_data:
+        return await interaction.followup.send(f"failed to fetch today's daily mod: {mod_data['error']}")
+        
+    embed = build_single_mod_embed(mod_data, ms, False)
+    embed.title = f"🌟 daily pick: {embed.title}"
+    
+    await interaction.followup.send(embed=embed, view=NotifyView())
 
 @bot.tree.command(name="help", description="need help? join the support server")
 async def help_cmd(interaction: discord.Interaction):
