@@ -64,25 +64,30 @@ def contains_banned_word(text: str) -> bool:
     return False
 
 # --- state management for immortal views ---
-def encode_state(action: str, query: str, sort_mode: str, page: int, per_page: int, platform: str, tag: str) -> str:
-    q = (query or "").replace("|", "")[:30]
-    s = (sort_mode or "").replace("|", "")
+SORT_MAP_ENC = {"recently_updated": "ru", "recently_published": "rp", "downloads": "dl", "pending": "pd", "featured": "ft"}
+SORT_MAP_DEC = {v: k for k, v in SORT_MAP_ENC.items()}
+
+def encode_state(action: str, query: str, sort_mode: str, page: int, per_page: int, platform: str, tag: str, developer: str) -> str:
+    q = (query or "").replace("|", "")[:20]
+    sm = SORT_MAP_ENC.get(sort_mode, "dl")
     p = (platform or "").replace("|", "")
     t = (tag or "").replace("|", "")
-    return f"modnav|{action}|{q}|{s}|{page}|{per_page}|{p}|{t}"
+    d = (developer or "").replace("|", "")[:20]
+    return f"modnav|{action}|{q}|{sm}|{page}|{per_page}|{p}|{t}|{d}"
 
 def decode_state(custom_id: str) -> Optional[dict]:
     parts = custom_id.split("|")
-    if len(parts) != 8: return None
-    _, action, q, s, page, per_page, p, t = parts
+    if len(parts) != 9: return None
+    _, action, q, sm, page, per_page, p, t, d = parts
     return {
         "action": action,
         "query": q if q else None,
-        "sort_mode": s if s else "downloads",
+        "sort_mode": SORT_MAP_DEC.get(sm, "downloads"),
         "page": int(page) if page.isdigit() else 1,
         "per_page": int(per_page) if per_page.isdigit() else 3,
         "platform": p if p else None,
-        "tag": t if t else None
+        "tag": t if t else None,
+        "developer": d if d else None
     }
 
 # --- cloudflare d1 tracker ---
@@ -378,7 +383,7 @@ class StatefulPageModal(discord.ui.Modal, title="jump to page"):
             await interaction.response.send_message("invalid page number.", ephemeral=True)
 
 class ModSearchView(discord.ui.View):
-    def __init__(self, bot, query: str = None, sort_mode: str = "downloads", page: int = 1, per_page: int = 3, platform: str = None, tag: str = None):
+    def __init__(self, bot, query: str = None, sort_mode: str = "downloads", page: int = 1, per_page: int = 3, platform: str = None, tag: str = None, developer: str = None):
         super().__init__(timeout=None)
         self.bot = bot
         self.query = query
@@ -387,6 +392,7 @@ class ModSearchView(discord.ui.View):
         self.per_page = per_page
         self.platform = platform
         self.tag = tag
+        self.developer = developer
         
         self.total_pages = 1
         self.total_mods = 0
@@ -400,7 +406,7 @@ class ModSearchView(discord.ui.View):
         actual_sort = "recently_updated" if self.sort_mode == "pending" else ("downloads" if featured else self.sort_mode)
         
         data = await self.bot.fetch_mods_list(
-            query=self.query, sort=actual_sort, status=status_val,
+            query=self.query, developer=self.developer, sort=actual_sort, status=status_val,
             featured=featured, platforms=self.platform, tags=self.tag,
             page=self.page, per_page=self.per_page
         )
@@ -413,7 +419,7 @@ class ModSearchView(discord.ui.View):
         if self.page > self.total_pages and self.total_pages > 0:
             self.page = self.total_pages
             data = await self.bot.fetch_mods_list(
-                query=self.query, sort=actual_sort, status=status_val,
+                query=self.query, developer=self.developer, sort=actual_sort, status=status_val,
                 featured=featured, platforms=self.platform, tags=self.tag,
                 page=self.page, per_page=self.per_page
             )
@@ -426,17 +432,17 @@ class ModSearchView(discord.ui.View):
         
         self.add_item(discord.ui.Button(
             label="<", style=discord.ButtonStyle.secondary,
-            custom_id=encode_state("prev", self.query, self.sort_mode, self.page, self.per_page, self.platform, self.tag),
+            custom_id=encode_state("prev", self.query, self.sort_mode, self.page, self.per_page, self.platform, self.tag, self.developer),
             disabled=self.page <= 1
         ))
         self.add_item(discord.ui.Button(
             label="page...", style=discord.ButtonStyle.secondary,
-            custom_id=encode_state("jump", self.query, self.sort_mode, self.page, self.per_page, self.platform, self.tag),
+            custom_id=encode_state("jump", self.query, self.sort_mode, self.page, self.per_page, self.platform, self.tag, self.developer),
             disabled=self.total_pages <= 1
         ))
         self.add_item(discord.ui.Button(
             label=">", style=discord.ButtonStyle.secondary,
-            custom_id=encode_state("next", self.query, self.sort_mode, self.page, self.per_page, self.platform, self.tag),
+            custom_id=encode_state("next", self.query, self.sort_mode, self.page, self.per_page, self.platform, self.tag, self.developer),
             disabled=self.page >= self.total_pages
         ))
         
@@ -462,9 +468,18 @@ class ModSearchView(discord.ui.View):
             "downloads": "trending mods",
             "pending": "pending mods"
         }
-        title = f"search: {self.query} ({titles.get(self.sort_mode, '')})" if self.query else titles.get(self.sort_mode, "trending mods")
-        if self.platform: title += f" | {self.platform}"
-        if self.tag: title += f" | tag: {self.tag}"
+        
+        base_title = titles.get(self.sort_mode, "trending mods")
+        if self.query:
+            title = f"search: {self.query} ({base_title})"
+        elif self.platform:
+            title = f"platform: {self.platform} ({base_title})"
+        elif self.tag:
+            title = f"tag: {self.tag} ({base_title})"
+        elif self.developer:
+            title = f"developer: {self.developer} ({base_title})"
+        else:
+            title = base_title
         
         return build_list_embeds(title, self.mods, self.page, self.total_pages, self.per_page, self.total_mods, ms, show_invite)
 
@@ -492,7 +507,7 @@ class Bot(commands.Bot):
 
     async def on_ready(self):
         await self.update_presence()
-        log.info(f"logged in as {self.user}")
+        log.info(f"bro is {self.user}")
 
     async def on_guild_join(self, guild): await self.update_presence()
     async def on_guild_remove(self, guild): await self.update_presence()
@@ -578,7 +593,8 @@ class Bot(commands.Bot):
                     mod_id = m.get('id') or 'unknown'
                     name = find_name(m, mod_id)
                     mod_tags = m.get('tags', [])
-                    all_mods.append({"id": mod_id, "name": name, "tags": mod_tags})
+                    dev = find_developer(m)
+                    all_mods.append({"id": mod_id, "name": name, "tags": mod_tags, "developer": dev})
                 
                 if len(mods) < per_page: break
                 page += 1
@@ -705,10 +721,8 @@ async def mod_autocomplete_logic(current: str):
 
 @bot.tree.command(name="getindex", description="browse geode mods or search the index")
 @discord.app_commands.describe(
-    sort_by="sort the mod list", 
-    tags="filter by tag", 
-    platform="filter by platform", 
-    search="search mod by name", 
+    sort_by="sort or filter mode", 
+    search="search query, tag, platform, or developer name", 
     mod_id="specific mod to view", 
     per_page="mods per page (1-5)"
 )
@@ -717,18 +731,19 @@ async def mod_autocomplete_logic(current: str):
     discord.app_commands.Choice(name="recently updated", value="recently_updated"),
     discord.app_commands.Choice(name="recent", value="recently_published"),
     discord.app_commands.Choice(name="pending", value="pending"),
+    discord.app_commands.Choice(name="by tag", value="tags"),
+    discord.app_commands.Choice(name="by platform", value="platform"),
+    discord.app_commands.Choice(name="by developer", value="developer"),
 ])
 async def checkforupdates(
     interaction: discord.Interaction, 
     sort_by: Optional[discord.app_commands.Choice[str]] = None, 
-    tags: Optional[str] = None, 
-    platform: Optional[str] = None, 
     search: Optional[str] = None, 
     mod_id: Optional[str] = None, 
     per_page: discord.app_commands.Range[int, 1, 5] = 3
 ):
-    if search or sort_by or platform or tags: mod_id = None
-    if (search and contains_banned_word(search)) or (mod_id and contains_banned_word(mod_id)) or (tags and contains_banned_word(tags)):
+    if search or sort_by: mod_id = None
+    if (search and contains_banned_word(search)) or (mod_id and contains_banned_word(mod_id)):
         return await interaction.response.send_message("lets not", ephemeral=True)
 
     await interaction.response.defer()
@@ -743,14 +758,35 @@ async def checkforupdates(
             return await interaction.followup.send(f"error: {mod_data['error']}")
         await interaction.followup.send(embed=build_single_mod_embed(mod_data, ms, show_invite), view=NotifyView())
     else:
+        query = search
+        sort_mode = "downloads"
+        tag = None
+        platform_val = None
+        developer = None
+
+        if sort_by:
+            val = sort_by.value
+            if val in ("featured", "recently_updated", "recently_published", "pending"):
+                sort_mode = val
+            elif val == "tags":
+                tag = search
+                query = None
+            elif val == "platform":
+                platform_val = search
+                query = None
+            elif val == "developer":
+                developer = search
+                query = None
+
         view = ModSearchView(
             bot, 
-            query=search, 
-            sort_mode=sort_by.value if sort_by else "downloads", 
+            query=query, 
+            sort_mode=sort_mode, 
             page=1,
             per_page=per_page,
-            platform=platform,
-            tag=tags
+            platform=platform_val,
+            tag=tag,
+            developer=developer
         )
         embeds = await view.generate_view()
         await interaction.followup.send(embeds=embeds, view=view)
@@ -759,27 +795,28 @@ async def checkforupdates(
 async def checkforupdates_mod_autocomplete(interaction: discord.Interaction, current: str):
     return await mod_autocomplete_logic(current)
 
-@checkforupdates.autocomplete("tags")
-async def checkforupdates_tags_autocomplete(interaction: discord.Interaction, current: str):
-    matches = [t for t in _TAGS_CACHE if current.lower() in t.lower()][:25]
-    return [discord.app_commands.Choice(name=t, value=t) for t in matches]
-
-@checkforupdates.autocomplete("platform")
-async def checkforupdates_platform_autocomplete(interaction: discord.Interaction, current: str):
-    platforms_map = {
-        "windows": "windows",
-        "mac": "macos",
-        "android": "android",
-        "ios": "ios",
-        "android32": "android32",
-        "android64": "android64"
-    }
-    matches = [
-        discord.app_commands.Choice(name=name, value=val)
-        for name, val in platforms_map.items()
-        if current.lower() in name.lower() or current.lower() in val.lower()
-    ][:25]
-    return matches
+@checkforupdates.autocomplete("search")
+async def checkforupdates_search_autocomplete(interaction: discord.Interaction, current: str):
+    sort_by = getattr(interaction.namespace, 'sort_by', None)
+    
+    if sort_by == "tags":
+        matches = [t for t in _TAGS_CACHE if current.lower() in t.lower()][:25]
+        return [discord.app_commands.Choice(name=t, value=t) for t in matches]
+    elif sort_by == "platform":
+        platforms_map = {
+            "windows": "windows", "mac": "macos", "android": "android",
+            "ios": "ios", "android32": "android32", "android64": "android64"
+        }
+        matches = [discord.app_commands.Choice(name=name, value=val)
+                for name, val in platforms_map.items()
+                if current.lower() in name.lower() or current.lower() in val.lower()][:25]
+        return matches
+    elif sort_by == "developer":
+        devs = list({m.get("developer", "unknown") for m in _ALL_MODS_CACHE if m.get("developer") and m.get("developer") != "unknown"})
+        matches = [d for d in devs if current.lower() in d.lower()][:25]
+        return [discord.app_commands.Choice(name=d, value=d) for d in matches]
+    
+    return []
 
 @bot.tree.command(name="daily", description="discover a hand-picked, featured geode mod of the day! (credit to night_zack on discord)")
 async def daily_cmd(interaction: discord.Interaction):
