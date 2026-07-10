@@ -594,7 +594,8 @@ class Bot(commands.Bot):
                     name = find_name(m, mod_id)
                     mod_tags = m.get('tags', [])
                     dev = find_developer(m)
-                    all_mods.append({"id": mod_id, "name": name, "tags": mod_tags, "developer": dev})
+                    featured = bool(m.get('featured', False))
+                    all_mods.append({"id": mod_id, "name": name, "tags": mod_tags, "developer": dev, "featured": featured})
                 
                 if len(mods) < per_page: break
                 page += 1
@@ -828,16 +829,21 @@ async def daily_cmd(interaction: discord.Interaction):
     daily_seed = int(today.strftime("%Y%m%d"))
     rng = random.Random(daily_seed)
     
-    # --- filter out bugfix mods before picking ---
+    # --- filter out bugfix mods, geode.loader, and featured mods before picking ---
     valid_mods = []
     for m in _ALL_MODS_CACHE:
         tags = [str(t).lower() for t in m.get("tags", [])]
-        if "bugfix" not in tags:
+        mod_id = m.get("id", "")
+        is_featured = m.get("featured", False)
+        
+        if "bugfix" not in tags and mod_id != "geode.loader" and not is_featured:
             valid_mods.append(m)
             
     if not valid_mods: 
-        valid_mods = _ALL_MODS_CACHE
-        
+        valid_mods = [m for m in _ALL_MODS_CACHE if m.get("id") != "geode.loader"]
+        if not valid_mods:
+            valid_mods = _ALL_MODS_CACHE
+            
     # --- sort by id to guarantee deterministic choices across cache updates ---
     valid_mods = sorted(valid_mods, key=lambda x: x["id"])
     
