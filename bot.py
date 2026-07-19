@@ -760,7 +760,7 @@ class Bot(commands.Bot):
                                         channel = self.get_channel(c_id) or await self.fetch_channel(c_id)
                                         if channel:
                                             ping_prefix = f"{ping_text} " if ping_text and ping_text != "none" else ""
-                                            msg_content = f"🔔 **Server Update Alert!**\n"
+                                            msg_content = f"🔔 **dude is mod!**\n"
                                             if custom_msg and custom_msg != "none":
                                                 msg_content += f"{custom_msg}\n\n"
                                                 
